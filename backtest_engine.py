@@ -154,7 +154,9 @@ if st.button("📊 Run Analysis & Backtest"):
     with st.spinner("កំពុងទាញយកទិន្នន័យ និងគណនា..."):
         df = fetch_historical_data(symbol=coin_input, timeframe="1h", limit=500)
         
-        if df is not None:
+        # ១. ត្រួតពិនិត្យថា តើទាញទិន្នន័យបានមកពិតប្រាកដមែនឬទេ និងមិនមែនជា DataFrame ទទេ
+        if df is not None and not df.empty:
+            
             # គណនា Indicators
             df['RSI'] = calculate_rsi_clean(df['close'], period=14)
             df = calculate_supertrend_clean(df, period=st_period, multiplier=st_multiplier)
@@ -163,55 +165,77 @@ if st.button("📊 Run Analysis & Backtest"):
             df['Avg_Volume'] = df['volume'].rolling(20).mean()
             df['Volume_Ratio'] = df['volume'] / df['Avg_Volume'].replace(0, np.nan)
             
-            # យកទិន្នន័យចុងក្រោយបង្អស់ (Latest Row) មកបង្ហាញលើ Metrics Card
-            latest = df.dropna().iloc[-1]
-            prev = df.dropna().iloc[-2]
+            # ២. បង្កើត DataFrame ថ្មីមួយដែលលុបចោលតម្លៃ NaN តែលើជួរឈរសំខាន់ៗសម្រាប់ការបង្ហាញ Metrics
+            df_cleaned = df.dropna(subset=['close', 'RSI', 'SuperTrend', 'ADX', 'MACD_Hist'])
             
-            # បង្កើត Columns សម្រាប់លោតកាត ដូចរូបភាពទី ១ របស់បង
-            col1, col2, col3, col4, col5 = st.columns(5)
-            
-            price_diff = ((latest['close'] - prev['close']) / prev['close']) * 100
-            col1.metric("💰 តម្លៃបច្ចុប្បន្ន", f"${latest['close']:.4f}", f"{price_diff:+.2f}%")
-            
-            col2.metric("📊 RSI (14)", f"{latest['RSI']:.1f}", "Normal" if 30 <= latest['RSI'] <= 70 else "Over")
-            
-            st_status = "🟢 Bullish" if latest['ST_Bullish'] else "🔴 Bearish"
-            col3.metric("📈 SuperTrend", f"${latest['SuperTrend']:.4f}", st_status)
-            
-            col4.metric("📦 Volume Ratio", f"{latest['Volume_Ratio']:.2f}x")
-            
-            macd_status = "▲ UP" if latest['MACD_Hist'] > 0 else "▼ DOWN"
-            col5.metric("⚡ MACD Hist", f"{latest['MACD_Hist']:.5f}", macd_status)
-            
-            # --------------------------------------------------------------------------------
-            # RUN BACKTEST LOGIC SHORT SUMMARY
-            # --------------------------------------------------------------------------------
-            st.subheader("📊 លទ្ធផល Backtest សាកល្បង (Market Regime Filter)")
-            
-            balance = 1000.0
-            position = 0.0
-            trades = 0
-            wins = 0
-            
-            for i in range(50, len(df)):
-                row = df.iloc[i]
-                c_close = row['close']
-                if position == 0.0 and row['ADX'] > 22 and row['ST_Bullish'] and row['RSI'] < 70:
-                    position = balance / c_close
-                    balance = 0.0
-                    trades += 1
-                elif position > 0.0 and (not row['ST_Bullish'] or row['RSI'] > 75):
-                    balance = position * c_close
-                    position = 0.0
-                    wins += 1 # សម្រាប់គំរូជាមូលដ្ឋាន
-            
-            if position > 0.0:
-                balance = position * df.iloc[-1]['close']
+            # ៣. ឆែកលក្ខខណ្ឌការពារ៖ បន្ទាប់ពីលុប NaN ហើយ តើនៅសល់ទិន្នន័យគ្រប់គ្រាន់សម្រាប់ទាញយកដែរឬទេ
+            if not df_cleaned.empty and len(df_cleaned) >= 2:
+                latest = df_cleaned.iloc[-1]
+                prev = df_cleaned.iloc[-2]
                 
-            final_return = ((balance - 1000.0) / 1000.0) * 100
-            
-            st.success(f"💰 ប្រាក់ដើម: $1000 | 💸 ផលចំណេញសរុប: {final_return:+.2f}% | 🔄 ការជួញដូរសរុប: {trades} ដង")
-            
-            # បង្ហាញតារាងទិន្នន័យការពារកុំឱ្យផ្ទាំងស
-            st.subheader("📋 ទិន្នន័យលម្អិត (Data Table)")
-            st.dataframe(df[['date', 'open', 'high', 'low', 'close', 'RSI', 'SuperTrend', 'ADX']].tail(10))
+                # បង្កើត Columns ចំនួន ៦ ឱ្យត្រូវតាម Layout ជាក់ស្តែងរបស់បង (មាន Signal Card មួយទៀត)
+                col1, col2, col3, col4, col5, col6 = st.columns(6)
+                
+                # កាតទី ១៖ តម្លៃបច្ចុប្បន្ន
+                price_diff = ((latest['close'] - prev['close']) / prev['close']) * 100
+                col1.metric("💰 តម្លៃបច្ចុប្បន្ន", f"${latest['close']:.4f}", f"{price_diff:+.2f}%")
+                
+                # កាតទី ២៖ RSI
+                col2.metric("📊 RSI (14)", f"{latest['RSI']:.1f}", "Normal" if 30 <= latest['RSI'] <= 70 else "Over")
+                
+                # កាតទី ៣៖ SuperTrend
+                st_status = "🟢 Bullish" if latest['ST_Bullish'] else "🔴 Bearish"
+                col3.metric("📈 SuperTrend", f"${latest['SuperTrend']:.4f}", st_status)
+                
+                # កាតទី ៤៖ Volume Ratio
+                col4.metric("📦 Volume Ratio", f"{latest['Volume_Ratio']:.2f}x")
+                
+                # កាតទី ៥៖ MACD Histogram
+                macd_status = "▲ UP" if latest['MACD_Hist'] > 0 else "▼ DOWN"
+                col5.metric("⚡ MACD Hist", f"{latest['MACD_Hist']:.5f}", macd_status)
+                
+                # កាតទី ៦៖ Signal (ផ្អែកលើ Market Regime របស់បង)
+                current_signal = "NEUTRAL"
+                if latest['ADX'] > 22 and latest['ST_Bullish'] and latest['RSI'] < 70:
+                    current_signal = "BUY (Trend)"
+                elif latest['ADX'] <= 22 and latest['RSI'] < 32:
+                    current_signal = "BUY (Sideway)"
+                col6.metric("🎯 Signal", current_signal, "Active")
+                
+                # --------------------------------------------------------------------------------
+                # RUN BACKTEST LOGIC SHORT SUMMARY
+                # --------------------------------------------------------------------------------
+                st.subheader("📊 លទ្ធផល Backtest សាកល្បង (Market Regime Filter)")
+                
+                balance = 1000.0
+                position = 0.0
+                trades = 0
+                wins = 0
+                
+                for i in range(50, len(df)):
+                    row = df.iloc[i]
+                    c_close = row['close']
+                    if position == 0.0 and row['ADX'] > 22 and row['ST_Bullish'] and row['RSI'] < 70:
+                        position = balance / c_close
+                        balance = 0.0
+                        trades += 1
+                    elif position > 0.0 and (not row['ST_Bullish'] or row['RSI'] > 75):
+                        balance = position * c_close
+                        position = 0.0
+                        wins += 1
+                
+                if position > 0.0:
+                    balance = position * df.iloc[-1]['close']
+                    
+                final_return = ((balance - 1000.0) / 1000.0) * 100
+                
+                st.success(f"💰 ប្រាក់ដើម: $1000 | 💸 ផលចំណេញសរុប: {final_return:+.2f}% | 🔄 ការជួញដូរសរុប: {trades} ដង")
+                
+                # បង្ហាញតារាងទិន្នន័យផ្នែកខាងក្រោម
+                st.subheader("📋 ទិន្នន័យលម្អិត (Data Table)")
+                st.dataframe(df[['date', 'open', 'high', 'low', 'close', 'RSI', 'SuperTrend', 'ADX']].tail(10))
+                
+            else:
+                st.error("❌ ទិន្នន័យមិនគ្រប់គ្រាន់សម្រាប់ការគណនា Indicators ឡើយ (ទិន្នន័យទាំងអស់សុទ្ធតែជា NaN)។")
+        else:
+            st.error("❌ មិនអាចទាញយកទិន្នន័យបានទេ! សូមពិនិត្យមើលការភ្ជាប់ API ទៅកាន់ Exchange ម្តងទៀត។")
