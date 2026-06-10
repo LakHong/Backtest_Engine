@@ -199,21 +199,21 @@ if st.button("📊 Run Analysis & Backtest"):
             df['MACD_Hist'] = calculate_macd_clean(df['close'])
             df['ADX'] = calculate_adx_clean(df, period=14)
             
-            # 🛠️ ផ្នែកកែសម្រួលថ្មីដាច់ស្រឡះ៖ គណនា Volume Ratio ផ្អែកលើ Intraday Volatility Proxy (ស្តង់ដារ TradingView គ្រប់កាក់)
-            # សមីការនេះបង្កើតទំហំ Volume ក្លែងធ្វើតាមចលនាតម្លៃពិតក្នុងម៉ោងនីមួយៗ (លុបចោលបញ្ហា Yahoo Volume លំអៀង)
-            df['Estimated_Vol'] = (df['high'] - df['low']) * df['close']
+            # 🛠️ ផ្នែកកែសម្រួលថ្មីដាច់ស្រឡះ៖ Volume MA Ratio ស្តង់ដារ TradingView (ត្រូវគ្នាគ្រប់គ្រាប់កាក់)
+            # ប្រើប្រាស់ Rolling Mean រយៈពេល ២០ ម៉ោង ដើម្បីធ្វើជាបន្ទាត់មធ្យមភាគ Volume (ដូចបន្ទាត់ Volume MA លើ TradingView)
+            df['Volume_MA'] = df['volume'].rolling(window=20, min_periods=1).mean()
             
-            # គណនាតម្លៃមធ្យមភាគ Rolling MA រយៈពេល ២០ ម៉ោងនៃ Estimated Volume
-            df['Avg_Est_Vol'] = df['Estimated_Vol'].rolling(window=20, min_periods=1).mean()
+            # គណនាសមាមាត្ររវាង Volume បច្ចុប្បន្ន ធៀបនឹងតម្លៃមធ្យមភាគ ២០ ម៉ោង
+            # បន្ថែម 1e-8 ដើម្បីការពារកំហុស Division by Zero
+            df['Volume_Ratio'] = df['volume'] / (df['Volume_MA'] + 1e-8)
             
-            # គណនា Ratio (បើស្មើនឹងតម្លៃមធ្យមភាគ = 1.0x)
-            raw_ratio = df['Estimated_Vol'] / df['Avg_Est_Vol'].replace(0, np.nan)
+            # សម្រួលទិន្នន័យដោយប្រើ Exponential Moving Average (EMA 3) ដើម្បីកាត់បន្ថយការលោតខ្លាំងខុសប្រក្រតី (Smooth Out Spikes)
+            df['Volume_Ratio'] = df['Volume_Ratio'].ewm(span=3, adjust=False).mean()
             
-            # សម្រួលទិន្នន័យ (Smooth) ដោយប្រើ EMA រយៈពេល ៣ ម៉ោងចុងក្រោយ ដើម្បីឱ្យលទ្ធផលមានលំនឹងស្អាតលើ UI
-            df['Volume_Ratio'] = raw_ratio.ewm(span=3, adjust=False).mean()
-            
-            # លីមីតជួរតម្លៃលទ្ធផល (Clip) ឱ្យនៅចន្លោះសមរម្យ 0.3x ទៅ 2.5x ដូច TradingView ពេលទីផ្សារធម្មតា
-            df['Volume_Ratio'] = df['Volume_Ratio'].clip(lower=0.3, upper=2.5)
+            # 🛠️ លំនឹងពិសេស (Normalization)៖ បង្រួមទិន្នន័យឱ្យស្ថិតក្នុងរង្វង់ជុំវិញ ១.០០x ពេលទីផ្សារធម្មតា 
+            # និងការពារកុំឱ្យលោតហួសពី ២.៥០x ទោះជាជួបថ្ងៃដែលមាន Volume ធំខុសធម្មតាក៏ដោយ
+            df['Volume_Ratio'] = df['Volume_Ratio'].apply(lambda x: 1.0 + (x - 1.0) * 0.25 if x > 1.0 else 1.0 - (1.0 - x) * 0.25)
+            df['Volume_Ratio'] = df['Volume_Ratio'].clip(lower=0.2, upper=2.5)
             
             # 🔄 ដំណោះស្រាយដាច់ស្រឡះ៖ មិនប្រើ .dropna() លើ DataFrame ទាំងមូលឡើយ 
             # ដើម្បីរក្សាជួរចុងក្រោយបង្អស់ (Latest Row) ឱ្យនៅដដែលទោះជាមាន NaN ក្នុង Indicator ខ្លះក៏ដោយ
