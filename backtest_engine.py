@@ -198,8 +198,10 @@ if st.button("📊 Run Analysis & Backtest"):
             df = calculate_supertrend_clean(df, period=st_period, multiplier=st_multiplier)
             df['MACD_Hist'] = calculate_macd_clean(df['close'])
             df['ADX'] = calculate_adx_clean(df, period=14)
-            df['Avg_Volume'] = df['volume'].ewm(span=20, adjust=False).mean()
-            df['Volume_Ratio'] = df['volume'] / df['Avg_Volume'].replace(0, np.nan)
+            df['Avg_Volume'] = df['volume'].rolling(window=20, min_periods=1).median()
+            raw_ratio = df['volume'] / df['Avg_Volume'].replace(0, np.nan)
+            df['Volume_Ratio'] = np.log1p(raw_ratio) / np.log(2)
+            df['Volume_Ratio'] = df['Volume_Ratio'].clip(lower=0.1, upper=3.0)
             
             # 🔄 ដំណោះស្រាយដាច់ស្រឡះ៖ មិនប្រើ .dropna() លើ DataFrame ទាំងមូលឡើយ 
             # ដើម្បីរក្សាជួរចុងក្រោយបង្អស់ (Latest Row) ឱ្យនៅដដែលទោះជាមាន NaN ក្នុង Indicator ខ្លះក៏ដោយ
