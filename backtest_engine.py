@@ -96,44 +96,36 @@ def calculate_supertrend_clean(df, period=10, multiplier=3.0):
 # 📥 DATA FETCH & BACKTEST
 # ========================================================================================
 
-def fetch_historical_data(symbol="BOME/USDT", timeframe="1h", limit=500):
-    # កំណត់ទម្រង់គូជួញដូរឱ្យត្រូវតាម Binance (ដកសញ្ញា / ចេញបើចាំបាច់ ប៉ុន្តែ CCXT ភាគច្រើនស្គាល់ Symbol ស្តង់ដារ)
-    # ប្តូរទៅប្រើប្រាស់ Binance US Endpoint ព្រោះ Server Streamlit ស្ថិតនៅអាមេរិក
-    exchange = ccxt.binanceus({
+def fetch_historical_data(symbol="BTC/USDT", timeframe="1h", limit=500):
+    # 🔄 ប្តូរមកប្រើប្រាស់ Bybit Exchange ដើម្បីគេចពីការ Block IP លើ Cloud Server ដាច់ស្រឡះ
+    # Bybit ផ្តល់ទិន្នន័យ Spot ពេញលេញ និងមិនទើសទម្រង់ IP របស់ Streamlit Cloud ឡើយ
+    exchange = ccxt.bybit({
         'enableRateLimit': True,
         'options': {
-            'defaultType': 'spot'
+            'defaultType': 'spot'  # កំណត់យកទីផ្សារ Spot ដូច Binance មុនដដែល
         }
     })
     
+    # កែសម្រួលទម្រង់ Symbol ឱ្យត្រូវតាមស្តង់ដារ CCXT (ធានាថាមានសញ្ញា / ជានិច្ច)
+    if "/" not in symbol:
+        # ប្រសិនបើអ្នកប្រើប្រាស់វាយបញ្ចូល ឬជ្រើសរើស "BTCUSDT" វានឹងប្តូរទៅជា "BTC/USDT" ស្វ័យប្រវត្ត
+        if symbol.endswith("USDT"):
+            symbol = symbol.replace("USDT", "/USDT")
+            
     try:
-        # ចំណាំ៖ Binance US អាចនឹងមិនមានគូកាក់ Meme មួយចំនួនដូច Binance.com ឡើយ
-        # ប្រសិនបើវាលោត Error ថាគ្មានកាក់ BOME យើងនឹងប្រើវិធីទី២ គឺផ្លាស់ប្តូរ Base URL នៃ API វិញ
+        # ទាញយកទិន្នន័យ OHLCV
         bars = exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
+        
+        if not bars:
+            return None
+            
         df = pd.DataFrame(bars, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
         df['date'] = pd.to_datetime(df['timestamp'], unit='ms')
         return df
         
     except Exception as e:
-        # ករណី Binance US គ្មានកាក់ BOME/USDT វានឹងរត់ចូលមកចំណុចនេះ 
-        # យើងនឹងព្យាយាមប្រើប្រាស់ Public Proxy API របស់ Binance.com វិញម្តង
-        try:
-            st.warning("កំពុងសាកល្បងទាញទិន្នន័យតាមរយៈ Alternative Binance Endpoint...")
-            exchange_alt = ccxt.binance({
-                'enableRateLimit': True,
-                'urls': {
-                    'api': {
-                        'public': 'https://api1.binance.com/api/v3', # ប្តូរទៅប្រើ API Cluster ផ្សេងរបស់ Binance
-                    }
-                }
-            })
-            bars = exchange_alt.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
-            df = pd.DataFrame(bars, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-            df['date'] = pd.to_datetime(df['timestamp'], unit='ms')
-            return df
-        except Exception as ex:
-            st.error(f"Error fetching from Binance System: {ex}")
-            return None
+        st.error(f"Error fetching data from Exchange Layer: {e}")
+        return None
 
 # ========================================================================================
 # 🖥️ STREAMLIT UI DISPLAY (ចំណុចដែលធ្វើឱ្យលែងចេញផ្ទាំងស)
