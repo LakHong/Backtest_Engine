@@ -3,6 +3,7 @@ import ccxt
 import pandas as pd
 import numpy as np
 from datetime import datetime
+import yfinance as yf
 
 # កំណត់ Page Config របស់ Streamlit ជាមុនសិន
 st.set_page_config(page_title="Multi Crypto Analysis & Backtest", layout="wide")
@@ -97,34 +98,50 @@ def calculate_supertrend_clean(df, period=10, multiplier=3.0):
 # ========================================================================================
 
 def fetch_historical_data(symbol="BTC/USDT", timeframe="1h", limit=500):
-    # 🔄 ប្តូរមកប្រើប្រាស់ Bybit Exchange ដើម្បីគេចពីការ Block IP លើ Cloud Server ដាច់ស្រឡះ
-    # Bybit ផ្តល់ទិន្នន័យ Spot ពេញលេញ និងមិនទើសទម្រង់ IP របស់ Streamlit Cloud ឡើយ
-    exchange = ccxt.bybit({
-        'enableRateLimit': True,
-        'options': {
-            'defaultType': 'spot'  # កំណត់យកទីផ្សារ Spot ដូច Binance មុនដដែល
-        }
-    })
+    """
+    ទាញយកទិន្នន័យពី Yahoo Finance ជំនួសវិញ ដើម្បីគេចពីការ Block IP 403/451 របស់ Exchange លើ Cloud
+    """
+    # 🔄 បំលែងទម្រង់ Symbol ពីស្តង់ដារ Exchange (ដូចជា BTC/USDT) ទៅជាទម្រង់របស់ Yahoo Finance (BTC-USD)
+    yf_symbol = symbol.replace("/USDT", "-USD").replace("USDT", "-USD")
     
-    # កែសម្រួលទម្រង់ Symbol ឱ្យត្រូវតាមស្តង់ដារ CCXT (ធានាថាមានសញ្ញា / ជានិច្ច)
-    if "/" not in symbol:
-        # ប្រសិនបើអ្នកប្រើប្រាស់វាយបញ្ចូល ឬជ្រើសរើស "BTCUSDT" វានឹងប្តូរទៅជា "BTC/USDT" ស្វ័យប្រវត្ត
-        if symbol.endswith("USDT"):
-            symbol = symbol.replace("USDT", "/USDT")
-            
+    # កំណត់ទម្រង់ Interval ឱ្យត្រូវគ្នា
+    # សម្រាប់ Yahoo Finance: 1h, 1d, 5m (ចំណាំ៖ Interval 1h អាចទាញថយក្រោយបានត្រឹម ៧៣០ថ្ងៃប៉ុណ្ណោះ ដែលវាគ្រប់គ្រាន់សម្រាប់ 500 bars)
+    yf_interval = "1h"
+    if timeframe == "1d":
+        yf_interval = "1d"
+    
     try:
-        # ទាញយកទិន្នន័យ OHLCV
-        bars = exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
+        # ហៅទាញទិន្នន័យតាមរយៈ yfinanceTicker
+        ticker = yf.Ticker(yf_symbol)
         
-        if not bars:
+        # ទាញយកទិន្នន័យតាមចំនួន Limit (សន្មតយករយៈពេល ២ ខែថយក្រោយសម្រាប់ 1h ល្មមបាន ៥០០ Bars)
+        period_str = "60d" if yf_interval == "1h" else "max"
+        df_yf = ticker.history(period=period_str, interval=yf_interval)
+        
+        if df_yf.empty:
+            st.error(f"⚠️ មិនមានទិន្នន័យសម្រាប់គូកាក់ {yf_symbol} ឡើយនៅលើ Yahoo Finance។")
             return None
             
-        df = pd.DataFrame(bars, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-        df['date'] = pd.to_datetime(df['timestamp'], unit='ms')
+        # រៀបចំទម្រង់ DataFrame ឡើងវិញឱ្យត្រូវគ្នាជាមួយកូដគណនា Indicators ចាស់របស់អ្នកទាំងស្រុង
+        df = df_yf.reset_index()
+        
+        # កែឈ្មោះជួរឈរ (Columns) ឱ្យទៅជាអក្សរតូចដើម្បីត្រូវជាមួយកូដចាស់
+        df = df.rename(columns={
+            'Datetime': 'date',
+            'Date': 'date',
+            'Open': 'open',
+            'High': 'high',
+            'Low': 'low',
+            'Close': 'close',
+            'Volume': 'volume'
+        })
+        
+        # តម្រៀបយកតែចំនួន Limit ដែលបងចង់បានចុងក្រោយគេ (ឧទាហរណ៍៖ ៥០០ Bars)
+        df = df.tail(limit).reset_index(drop=True)
         return df
         
     except Exception as e:
-        st.error(f"Error fetching data from Exchange Layer: {e}")
+        st.error(f"Error fetching data from Yahoo Finance Layer: {e}")
         return None
 
 # ========================================================================================
