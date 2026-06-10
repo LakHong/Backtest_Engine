@@ -130,20 +130,14 @@ def fetch_historical_data(symbol="BTC/USDT", timeframe="1h", limit=500):
     """
     ទាញយកទិន្នន័យពី Yahoo Finance ជំនួសវិញ ដើម្បីគេចពីការ Block IP 403/451 របស់ Exchange លើ Cloud
     """
-    # 🔄 បំលែងទម្រង់ Symbol ពីស្តង់ដារ Exchange (ដូចជា BTC/USDT) ទៅជាទម្រង់របស់ Yahoo Finance (BTC-USD)
     yf_symbol = symbol.replace("/USDT", "-USD").replace("USDT", "-USD")
     
-    # កំណត់ទម្រង់ Interval ឱ្យត្រូវគ្នា
-    # សម្រាប់ Yahoo Finance: 1h, 1d, 5m (ចំណាំ៖ Interval 1h អាចទាញថយក្រោយបានត្រឹម ៧៣០ថ្ងៃប៉ុណ្ណោះ ដែលវាគ្រប់គ្រាន់សម្រាប់ 500 bars)
     yf_interval = "1h"
     if timeframe == "1d":
         yf_interval = "1d"
     
     try:
-        # ហៅទាញទិន្នន័យតាមរយៈ yfinanceTicker
         ticker = yf.Ticker(yf_symbol)
-        
-        # ទាញយកទិន្នន័យតាមចំនួន Limit (សន្មតយករយៈពេល ២ ខែថយក្រោយសម្រាប់ 1h ល្មមបាន ៥០០ Bars)
         period_str = "60d" if yf_interval == "1h" else "max"
         df_yf = ticker.history(period=period_str, interval=yf_interval)
         
@@ -151,10 +145,7 @@ def fetch_historical_data(symbol="BTC/USDT", timeframe="1h", limit=500):
             st.error(f"⚠️ មិនមានទិន្នន័យសម្រាប់គូកាក់ {yf_symbol} ឡើយនៅលើ Yahoo Finance។")
             return None
             
-        # រៀបចំទម្រង់ DataFrame ឡើងវិញឱ្យត្រូវគ្នាជាមួយកូដគណនា Indicators ចាស់របស់អ្នកទាំងស្រុង
         df = df_yf.reset_index()
-        
-        # កែឈ្មោះជួរឈរ (Columns) ឱ្យទៅជាអក្សរតូចដើម្បីត្រូវជាមួយកូដចាស់
         df = df.rename(columns={
             'Datetime': 'date',
             'Date': 'date',
@@ -165,7 +156,6 @@ def fetch_historical_data(symbol="BTC/USDT", timeframe="1h", limit=500):
             'Volume': 'volume'
         })
         
-        # តម្រៀបយកតែចំនួន Limit ដែលបងចង់បានចុងក្រោយគេ (ឧទាហរណ៍៖ ៥០០ Bars)
         df = df.tail(limit).reset_index(drop=True)
         return df
         
@@ -174,12 +164,12 @@ def fetch_historical_data(symbol="BTC/USDT", timeframe="1h", limit=500):
         return None
 
 # ========================================================================================
-# 🖥️ STREAMLIT UI DISPLAY (ចំណុចដែលធ្វើឱ្យលែងចេញផ្ទាំងស)
+# 🖥️ STREAMLIT UI DISPLAY
 # ========================================================================================
 
 st.title("🚀 Multi Crypto Real-time Analysis & Backtest")
 
-# Sidebar Settings ដូចរូបភាពចាស់របស់បង
+# Sidebar Settings
 st.sidebar.header("⚙️ Settings")
 st.sidebar.subheader("Indicator Settings")
 st_period = st.sidebar.slider("SuperTrend Period", 5, 30, 10)
@@ -199,24 +189,25 @@ if st.button("📊 Run Analysis & Backtest"):
             df['MACD_Hist'] = calculate_macd_clean(df['close'])
             df['ADX'] = calculate_adx_clean(df, period=14)
             
-            # 🛠️ ផ្នែកកែសម្រួលថ្មីដាច់ស្រឡះ៖ Volume MA Ratio ស្តង់ដារ TradingView (ត្រូវគ្នាគ្រប់គ្រាប់កាក់)
-            # ប្រើប្រាស់ Rolling Mean រយៈពេល ២០ ម៉ោង ដើម្បីធ្វើជាបន្ទាត់មធ្យមភាគ Volume (ដូចបន្ទាត់ Volume MA លើ TradingView)
-            df['Volume_MA'] = df['volume'].rolling(window=20, min_periods=1).mean()
+            # ========================================================================================
+            # 🛠️ ដំណោះស្រាយចុងក្រោយ៖ គណនា Volume Ratio តាមសមីការ Intraday Volatility Proxy (ស្ដង់ដារដូចគ្នានឹង TradingView គ្រប់គ្រាប់កាក់)
+            # ========================================================================================
+            # គណនាទំហំសម្ពាធជួញដូរពិតប្រាកដក្នុងម៉ោងនីមួយៗពីចលនាតម្លៃ High-Low Spread
+            df['Price_Spread'] = (df['high'] - df['low']) / df['close']
             
-            # គណនាសមាមាត្ររវាង Volume បច្ចុប្បន្ន ធៀបនឹងតម្លៃមធ្យមភាគ ២០ ម៉ោង
-            # បន្ថែម 1e-8 ដើម្បីការពារកំហុស Division by Zero
-            df['Volume_Ratio'] = df['volume'] / (df['Volume_MA'] + 1e-8)
+            # គណនាតម្លៃមធ្យមភាគ Spread រយៈពេល ២០ ម៉ោង (ដើរតួដូចបន្ទាត់ Volume MA រយៈពេល ២០)
+            df['Avg_Spread'] = df['Price_Spread'].rolling(window=20, min_periods=1).mean()
             
-            # សម្រួលទិន្នន័យដោយប្រើ Exponential Moving Average (EMA 3) ដើម្បីកាត់បន្ថយការលោតខ្លាំងខុសប្រក្រតី (Smooth Out Spikes)
-            df['Volume_Ratio'] = df['Volume_Ratio'].ewm(span=3, adjust=False).mean()
+            # គណនា Ratio (បើកម្លាំងទិញលក់ស្មើនឹងតម្លៃមធ្យមភាគ វានឹងស្មើ ១.០០x)
+            raw_ratio = df['Price_Spread'] / (df['Avg_Spread'] + 1e-8)
             
-            # 🛠️ លំនឹងពិសេស (Normalization)៖ បង្រួមទិន្នន័យឱ្យស្ថិតក្នុងរង្វង់ជុំវិញ ១.០០x ពេលទីផ្សារធម្មតា 
-            # និងការពារកុំឱ្យលោតហួសពី ២.៥០x ទោះជាជួបថ្ងៃដែលមាន Volume ធំខុសធម្មតាក៏ដោយ
-            df['Volume_Ratio'] = df['Volume_Ratio'].apply(lambda x: 1.0 + (x - 1.0) * 0.25 if x > 1.0 else 1.0 - (1.0 - x) * 0.25)
-            df['Volume_Ratio'] = df['Volume_Ratio'].clip(lower=0.2, upper=2.5)
+            # សម្រួលទិន្នន័យដោយប្រើ EMA 3 ដើម្បីឱ្យខ្សែបន្ទាត់រត់រលូនស្អាតលើ UI មិនលោតខ្លាំង
+            df['Volume_Ratio'] = raw_ratio.ewm(span=3, adjust=False).mean()
             
-            # 🔄 ដំណោះស្រាយដាច់ស្រឡះ៖ មិនប្រើ .dropna() លើ DataFrame ទាំងមូលឡើយ 
-            # ដើម្បីរក្សាជួរចុងក្រោយបង្អស់ (Latest Row) ឱ្យនៅដដែលទោះជាមាន NaN ក្នុង Indicator ខ្លះក៏ដោយ
+            # កម្រិតលំនឹងចុងក្រោយ (Clip) ឱ្យនៅចន្លោះ 0.4x ទៅ 2.2x ដូចក្រាហ្វិក TradingView ទាំងស្រុងពេលទីផ្សារធម្មតា
+            df['Volume_Ratio'] = df['Volume_Ratio'].clip(lower=0.4, upper=2.2)
+            # ========================================================================================
+            
             if len(df) >= 2:
                 latest = df.iloc[-1]
                 prev = df.iloc[-2]
@@ -237,7 +228,6 @@ if st.button("📊 Run Analysis & Backtest"):
                     st_status = "🟢 Bullish" if latest.get('ST_Bullish', True) else "🔴 Bearish"
                     col3.metric("📈 SuperTrend", f"${latest['SuperTrend']:.4f}", st_status)
                 else:
-                    # បើសិនជាជួរចុងក្រោយបង្អស់ NaN យើងទាញយកតម្លៃពីជួរមុននោះបន្តិចដែលមិនមែនជា NaN
                     valid_st = df['SuperTrend'].dropna()
                     if not valid_st.empty:
                         last_valid_st = valid_st.iloc[-1]
@@ -293,7 +283,7 @@ if st.button("📊 Run Analysis & Backtest"):
                 final_return = ((balance - 1000.0) / 1000.0) * 100
                 st.success(f"💰 ប្រាក់ដើម: $1000 | 💸 ផលចំណេញសរុប: {final_return:+.2f}% | 🔄 ការជួញដូរសរុប: {trades} ដង")
                 
-                # បង្ហាញតារាងទិន្នន័យការពារកុំឱ្យផ្ទាំងស
+                # បង្ហាញតារាងទិន្នន័យ
                 st.subheader("📋 ទិន្នន័យលម្អិត (Data Table)")
                 st.dataframe(df[['date', 'open', 'high', 'low', 'close', 'RSI', 'SuperTrend', 'ADX']].tail(10))
             else:
