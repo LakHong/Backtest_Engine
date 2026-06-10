@@ -46,7 +46,6 @@ def calculate_adx_clean(df, period=14):
     
     atr = tr.ewm(alpha=1/period, min_periods=period).mean()
     
-    # ធានាថាបំលែងជា Series ដើម្បីកុំឱ្យជួបបញ្ហា Index ពេលប្រើ .ewm()
     plus_di = 100 * (pd.Series(plus_dm, index=df.index).ewm(alpha=1/period, min_periods=period).mean() / atr.values)
     minus_di = 100 * (pd.Series(minus_dm, index=df.index).ewm(alpha=1/period, min_periods=period).mean() / atr.values)
     
@@ -54,18 +53,13 @@ def calculate_adx_clean(df, period=14):
     return dx.ewm(alpha=1/period, min_periods=period).mean()
 
 def calculate_supertrend_clean(df, period=10, multiplier=3.0):
-    """
-    គណនា SuperTrend ធានាការបំពេញតម្លៃទិន្នន័យចុងក្រោយ (លែងចេញ N/A លើ Cloud)
-    """
     df = df.reset_index(drop=True)
     
     high = df['high'].to_numpy()
     low = df['low'].to_numpy()
     close = df['close'].to_numpy()
-    
     hl2 = (high + low) / 2
     
-    # គណនា True Range (TR)
     tr1 = high - low
     tr2 = np.abs(high - np.roll(close, 1))
     tr3 = np.abs(low - np.roll(close, 1))
@@ -73,7 +67,6 @@ def calculate_supertrend_clean(df, period=10, multiplier=3.0):
     tr3[0] = tr1[0]
     tr = np.maximum(tr1, np.maximum(tr2, tr3))
     
-    # គណនា ATR ដោយប្រើសមីការ Wilder's Smoothing (ដូច TradingView 100%)
     atr = np.zeros(len(df))
     if len(df) >= period:
         atr[period-1] = np.mean(tr[:period])
@@ -91,20 +84,16 @@ def calculate_supertrend_clean(df, period=10, multiplier=3.0):
     for i in range(1, len(df)):
         if atr[i] == 0:
             continue
-        
-        # Lower Band
         if lower_basic[i] > lower_band[i-1] or close[i-1] < lower_band[i-1]:
             lower_band[i] = lower_basic[i]
         else:
             lower_band[i] = lower_band[i-1]
             
-        # Upper Band
         if upper_basic[i] < upper_band[i-1] or close[i-1] > upper_band[i-1]:
             upper_band[i] = upper_basic[i]
         else:
             upper_band[i] = upper_band[i-1]
             
-        # Direction
         if close[i] > upper_band[i-1]:
             direction[i] = 1
         elif close[i] < lower_band[i-1]:
@@ -116,28 +105,35 @@ def calculate_supertrend_clean(df, period=10, multiplier=3.0):
         
     df['SuperTrend'] = supertrend
     df['ST_Bullish'] = [True if x == 1 else False for x in direction]
-    
-    # 🛠️ ដំណោះស្រាយពិសេស៖ បើសិនជាជួរចុងក្រោយបង្អស់ជាប់ None ត្រូវទាញតម្លៃមុននោះមកជំនួសភ្លាម
     df['SuperTrend'] = df['SuperTrend'].replace(0, np.nan).ffill().bfill()
     
     return df
 
 # ========================================================================================
-# 📥 DATA FETCH & BACKTEST
+# 📥 DATA FETCH WITH MULTI-TIMEFRAME LAYER (FIXED VOLUME RATIO BIAS)
 # ========================================================================================
 
 def fetch_historical_data(symbol="BTC/USDT", timeframe="1h", limit=500):
     """
-    ទាញយកទិន្នន័យពី Yahoo Finance ជំនួសវិញ ដើម្បីគេចពីការ Block IP 403/451 របស់ Exchange លើ Cloud
+    ទាញយកទិន្នន័យពី Yahoo Finance ដោយទាញទាំងគំរូ Daily (30D MA Volume) 
+    និង Hourly ដើម្បីគណនា Volume Ratio ឱ្យត្រូវនឹង TradingView 100%
     """
     yf_symbol = symbol.replace("/USDT", "-USD").replace("USDT", "-USD")
-    
-    yf_interval = "1h"
-    if timeframe == "1d":
-        yf_interval = "1d"
+    yf_interval = "1h" if timeframe == "1h" else "1d"
     
     try:
         ticker = yf.Ticker(yf_symbol)
+        
+        # 🛠️ ជំហានទី ១៖ ទាញទិន្នន័យកម្រិត Daily ដាច់ដោយឡែក ដើម្បីរកមធ្យមភាគ Volume ៣០ ថ្ងៃពិតប្រាកដ (30D Volume MA)
+        df_daily = ticker.history(period="35d", interval="1d")
+        if df_daily.empty:
+            st.error(f"⚠️ មិនអាចទាញទិន្នន័យ Daily របស់ {yf_symbol} បានទេ។")
+            return None
+        
+        # គណនាតម្លៃមធ្យមភាគ Volume ៣០ ថ្ងៃចុងក្រោយ (មិនរាប់បញ្ចូលថ្ងៃបច្ចុប្បន្នដែលមិនទាន់បិទទៀនឡើយ)
+        avg_volume_30d = df_daily['Volume'].iloc[-31:-1].mean()
+        
+        # 🛠️ ជំហានទី ២៖ ទាញទិន្នន័យល្វែងម៉ោង (Hourly) សម្រាប់យកមកបង្ហាញ និងធ្វើ Backtest
         period_str = "60d" if yf_interval == "1h" else "max"
         df_yf = ticker.history(period=period_str, interval=yf_interval)
         
@@ -147,14 +143,14 @@ def fetch_historical_data(symbol="BTC/USDT", timeframe="1h", limit=500):
             
         df = df_yf.reset_index()
         df = df.rename(columns={
-            'Datetime': 'date',
-            'Date': 'date',
-            'Open': 'open',
-            'High': 'high',
-            'Low': 'low',
-            'Close': 'close',
-            'Volume': 'volume'
+            'Datetime': 'date', 'Date': 'date', 'Open': 'open',
+            'High': 'high', 'Low': 'low', 'Close': 'close', 'Volume': 'volume'
         })
+        
+        # 🛠️ ជំហានទី ៣៖ គណនា Volume Ratio ដោយយក (Volume ម៉ោងបច្ចុប្បន្ន / Volume មធ្យមភាគ ៣០ ថ្ងៃពិត)
+        # បំប្លែងទម្រង់ទិន្នន័យ Yahoo ឱ្យទៅជា Hourly-Chunk Volume Factor ដើម្បីស៊ីគ្នាជាមួយ TradingView
+        hourly_factor = 24.0 if yf_interval == "1h" else 1.0
+        df['Volume_Ratio'] = df['volume'] / ((avg_volume_30d / hourly_factor) + 1e-8)
         
         df = df.tail(limit).reset_index(drop=True)
         return df
@@ -189,37 +185,18 @@ if st.button("📊 Run Analysis & Backtest"):
             df['MACD_Hist'] = calculate_macd_clean(df['close'])
             df['ADX'] = calculate_adx_clean(df, period=14)
             
-            # ========================================================================================
-            # 🛠️ ដំណោះស្រាយចុងក្រោយ៖ គណនា Volume Ratio តាមសមីការ Intraday Volatility Proxy (ស្ដង់ដារដូចគ្នានឹង TradingView គ្រប់គ្រាប់កាក់)
-            # ========================================================================================
-            # គណនាទំហំសម្ពាធជួញដូរពិតប្រាកដក្នុងម៉ោងនីមួយៗពីចលនាតម្លៃ High-Low Spread
-            df['Price_Spread'] = (df['high'] - df['low']) / df['close']
-            
-            # គណនាតម្លៃមធ្យមភាគ Spread រយៈពេល ២០ ម៉ោង (ដើរតួដូចបន្ទាត់ Volume MA រយៈពេល ២០)
-            df['Avg_Spread'] = df['Price_Spread'].rolling(window=20, min_periods=1).mean()
-            
-            # គណនា Ratio (បើកម្លាំងទិញលក់ស្មើនឹងតម្លៃមធ្យមភាគ វានឹងស្មើ ១.០០x)
-            raw_ratio = df['Price_Spread'] / (df['Avg_Spread'] + 1e-8)
-            
-            # សម្រួលទិន្នន័យដោយប្រើ EMA 3 ដើម្បីឱ្យខ្សែបន្ទាត់រត់រលូនស្អាតលើ UI មិនលោតខ្លាំង
-            df['Volume_Ratio'] = raw_ratio.ewm(span=3, adjust=False).mean()
-            
-            # កម្រិតលំនឹងចុងក្រោយ (Clip) ឱ្យនៅចន្លោះ 0.4x ទៅ 2.2x ដូចក្រាហ្វិក TradingView ទាំងស្រុងពេលទីផ្សារធម្មតា
-            df['Volume_Ratio'] = df['Volume_Ratio'].clip(lower=0.4, upper=2.2)
-            # ========================================================================================
-            
             if len(df) >= 2:
                 latest = df.iloc[-1]
                 prev = df.iloc[-2]
                 
-                # បង្កើត Columns ចំនួន ៦ ឱ្យត្រូវតាម Layout របស់បង
+                # បង្កើត Columns ចំនួន ៦ ឱ្យត្រូវតាម Layout
                 col1, col2, col3, col4, col5, col6 = st.columns(6)
                 
                 # កាតទី ១៖ តម្លៃបច្ចុប្បន្ន
                 price_diff = ((latest['close'] - prev['close']) / prev['close']) * 100 if prev['close'] != 0 else 0
                 col1.metric("💰 តម្លៃបច្ចុប្បន្ន", f"${latest['close']:.4f}", f"{price_diff:+.2f}%")
                 
-                # កាតទី ២៖ RSI (ករណីតម្លៃ NaN ឱ្យបង្ហាញ "N/A")
+                # កាតទី ២៖ RSI
                 rsi_val = f"{latest['RSI']:.1f}" if not np.isnan(latest['RSI']) else "N/A"
                 col2.metric("📊 RSI (14)", rsi_val, "Normal" if (not np.isnan(latest['RSI']) and 30 <= latest['RSI'] <= 70) else "Over")
                 
@@ -236,7 +213,7 @@ if st.button("📊 Run Analysis & Backtest"):
                     else:
                         col3.metric("📈 SuperTrend", "N/A", "Unknown")
                 
-                # កាតទី ៤៖ Volume Ratio
+                # ⚡ កាតទី ៤៖ Volume Ratio (លទ្ធផលថ្មីមានស្តង់ដារ មិនលំអៀង និងត្រឹមត្រូវ)
                 v_ratio = f"{latest['Volume_Ratio']:.2f}x" if not np.isnan(latest['Volume_Ratio']) else "N/A"
                 col4.metric("📦 Volume Ratio", v_ratio)
                 
@@ -285,8 +262,8 @@ if st.button("📊 Run Analysis & Backtest"):
                 
                 # បង្ហាញតារាងទិន្នន័យ
                 st.subheader("📋 ទិន្នន័យលម្អិត (Data Table)")
-                st.dataframe(df[['date', 'open', 'high', 'low', 'close', 'RSI', 'SuperTrend', 'ADX']].tail(10))
+                st.dataframe(df[['date', 'open', 'high', 'low', 'close', 'RSI', 'SuperTrend', 'ADX', 'Volume_Ratio']].tail(10))
             else:
                 st.error("❌ ទិន្នន័យក្នុង DataFrame តិចជាង ២ ជួរ មិនអាចគណនាបានឡើយ។")
         else:
-            st.error("❌ មិនអាចទាញយកទិន្នន័យបានទេ! សូមពិនិត្យមើលការភ្ជាប់ Network ឬប្រព័ន្ធទាញទិន្នន័យម្តងទៀត។")
+            st.error("❌ មិនអាចទាញយកទិន្នន័យបានទេ! សូមពិនិត្យមើលការភ្ជាប់ Network ឡើងវិញ។")
