@@ -198,10 +198,19 @@ if st.button("📊 Run Analysis & Backtest"):
             df = calculate_supertrend_clean(df, period=st_period, multiplier=st_multiplier)
             df['MACD_Hist'] = calculate_macd_clean(df['close'])
             df['ADX'] = calculate_adx_clean(df, period=14)
-            df['Avg_Volume'] = df['volume'].rolling(window=20, min_periods=1).median()
-            raw_ratio = df['volume'] / df['Avg_Volume'].replace(0, np.nan)
-            df['Volume_Ratio'] = np.log1p(raw_ratio) / np.log(2)
-            df['Volume_Ratio'] = df['Volume_Ratio'].clip(lower=0.1, upper=3.0)
+            
+            # 🛠️ ផ្នែកកែសម្រួលថ្មី៖ គណនា Volume Ratio បែប Z-Score Standardized (ត្រូវទាំង BTC និង ETH)
+            df['Vol_Mean'] = df['volume'].rolling(window=20, min_periods=1).mean()
+            df['Vol_Std'] = df['volume'].rolling(window=20, min_periods=1).std()
+            
+            # គណនា Z-Score ដើម្បីវាស់សម្ពាធទំហំជួញដូរ (បូក 1e-8 ការពារកំហុសចែកនឹងសូន្យ)
+            df['Vol_Z_Score'] = (df['volume'] - df['Vol_Mean']) / (df['Vol_Std'] + 1e-8)
+            
+            # បំប្លែងមកជា Ratio Multiplier ឱ្យនៅជុំវិញកម្រិត ១.០០x ដូចបន្ទាត់ Volume MA លើ TradingView
+            df['Volume_Ratio'] = 1.0 + (df['Vol_Z_Score'] * 0.2)
+            
+            # លីមីតជួរតម្លៃលទ្ធផលចុងក្រោយដើម្បីកុំឱ្យ UI លោតខ្លាំងពេក
+            df['Volume_Ratio'] = df['Volume_Ratio'].clip(lower=0.1, upper=2.5)
             
             # 🔄 ដំណោះស្រាយដាច់ស្រឡះ៖ មិនប្រើ .dropna() លើ DataFrame ទាំងមូលឡើយ 
             # ដើម្បីរក្សាជួរចុងក្រោយបង្អស់ (Latest Row) ឱ្យនៅដដែលទោះជាមាន NaN ក្នុង Indicator ខ្លះក៏ដោយ
