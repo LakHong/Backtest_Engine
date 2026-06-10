@@ -193,24 +193,27 @@ if st.button("📊 Run Analysis & Backtest"):
         df = fetch_historical_data(symbol=coin_input, timeframe="1h", limit=500)
         
         if df is not None and not df.empty:
-            # គណនា Indicators
+            # គណនា Indicators ធម្មតា
             df['RSI'] = calculate_rsi_clean(df['close'], period=14)
             df = calculate_supertrend_clean(df, period=st_period, multiplier=st_multiplier)
             df['MACD_Hist'] = calculate_macd_clean(df['close'])
             df['ADX'] = calculate_adx_clean(df, period=14)
             
-            # 🛠️ ផ្នែកកែសម្រួលថ្មី៖ គណនា Volume Ratio បែប Z-Score Standardized (ត្រូវទាំង BTC និង ETH)
-            df['Vol_Mean'] = df['volume'].rolling(window=20, min_periods=1).mean()
-            df['Vol_Std'] = df['volume'].rolling(window=20, min_periods=1).std()
+            # 🛠️ ផ្នែកកែសម្រួលថ្មីដាច់ស្រឡះ៖ គណនា Volume Ratio ផ្អែកលើ Intraday Volatility Proxy (ស្តង់ដារ TradingView គ្រប់កាក់)
+            # សមីការនេះបង្កើតទំហំ Volume ក្លែងធ្វើតាមចលនាតម្លៃពិតក្នុងម៉ោងនីមួយៗ (លុបចោលបញ្ហា Yahoo Volume លំអៀង)
+            df['Estimated_Vol'] = (df['high'] - df['low']) * df['close']
             
-            # គណនា Z-Score ដើម្បីវាស់សម្ពាធទំហំជួញដូរ (បូក 1e-8 ការពារកំហុសចែកនឹងសូន្យ)
-            df['Vol_Z_Score'] = (df['volume'] - df['Vol_Mean']) / (df['Vol_Std'] + 1e-8)
+            # គណនាតម្លៃមធ្យមភាគ Rolling MA រយៈពេល ២០ ម៉ោងនៃ Estimated Volume
+            df['Avg_Est_Vol'] = df['Estimated_Vol'].rolling(window=20, min_periods=1).mean()
             
-            # បំប្លែងមកជា Ratio Multiplier ឱ្យនៅជុំវិញកម្រិត ១.០០x ដូចបន្ទាត់ Volume MA លើ TradingView
-            df['Volume_Ratio'] = 1.0 + (df['Vol_Z_Score'] * 0.2)
+            # គណនា Ratio (បើស្មើនឹងតម្លៃមធ្យមភាគ = 1.0x)
+            raw_ratio = df['Estimated_Vol'] / df['Avg_Est_Vol'].replace(0, np.nan)
             
-            # លីមីតជួរតម្លៃលទ្ធផលចុងក្រោយដើម្បីកុំឱ្យ UI លោតខ្លាំងពេក
-            df['Volume_Ratio'] = df['Volume_Ratio'].clip(lower=0.1, upper=2.5)
+            # សម្រួលទិន្នន័យ (Smooth) ដោយប្រើ EMA រយៈពេល ៣ ម៉ោងចុងក្រោយ ដើម្បីឱ្យលទ្ធផលមានលំនឹងស្អាតលើ UI
+            df['Volume_Ratio'] = raw_ratio.ewm(span=3, adjust=False).mean()
+            
+            # លីមីតជួរតម្លៃលទ្ធផល (Clip) ឱ្យនៅចន្លោះសមរម្យ 0.3x ទៅ 2.5x ដូច TradingView ពេលទីផ្សារធម្មតា
+            df['Volume_Ratio'] = df['Volume_Ratio'].clip(lower=0.3, upper=2.5)
             
             # 🔄 ដំណោះស្រាយដាច់ស្រឡះ៖ មិនប្រើ .dropna() លើ DataFrame ទាំងមូលឡើយ 
             # ដើម្បីរក្សាជួរចុងក្រោយបង្អស់ (Latest Row) ឱ្យនៅដដែលទោះជាមាន NaN ក្នុង Indicator ខ្លះក៏ដោយ
