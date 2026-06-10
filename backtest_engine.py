@@ -55,9 +55,8 @@ def calculate_adx_clean(df, period=14):
 
 def calculate_supertrend_clean(df, period=10, multiplier=3.0):
     """
-    គណនា SuperTrend ដោយប្រើប្រាស់ NumPy Arrays ធានាថាលែងចេញ NaN លើ Streamlit Cloud
+    គណនា SuperTrend ធានាការបំពេញតម្លៃទិន្នន័យចុងក្រោយ (លែងចេញ N/A លើ Cloud)
     """
-    # ធានាថា Index ត្រូវបានរៀបចំជាលេខរៀងលំដាប់លំដោយពី 0 ឡើងទៅ
     df = df.reset_index(drop=True)
     
     high = df['high'].to_numpy()
@@ -70,14 +69,17 @@ def calculate_supertrend_clean(df, period=10, multiplier=3.0):
     tr1 = high - low
     tr2 = np.abs(high - np.roll(close, 1))
     tr3 = np.abs(low - np.roll(close, 1))
-    tr2[0] = 0
-    tr3[0] = 0
+    tr2[0] = tr1[0]
+    tr3[0] = tr1[0]
     tr = np.maximum(tr1, np.maximum(tr2, tr3))
     
-    # គណនា Average True Range (ATR) តាមទម្រង់ EWM
-    tr_series = pd.Series(tr)
-    atr = tr_series.ewm(alpha=1/period, min_periods=period).mean().to_numpy()
-    
+    # គណនា ATR ដោយប្រើសមីការ Wilder's Smoothing (ដូច TradingView 100%)
+    atr = np.zeros(len(df))
+    if len(df) >= period:
+        atr[period-1] = np.mean(tr[:period])
+        for i in range(period, len(df)):
+            atr[i] = (atr[i-1] * (period - 1) + tr[i]) / period
+            
     upper_basic = hl2 + multiplier * atr
     lower_basic = hl2 - multiplier * atr
     
@@ -86,24 +88,23 @@ def calculate_supertrend_clean(df, period=10, multiplier=3.0):
     direction = np.ones(len(df))
     supertrend = np.zeros(len(df))
     
-    # ចាប់ផ្តើម Loop គណនា Band នីមួយៗដោយសុវត្ថិភាព
     for i in range(1, len(df)):
-        if np.isnan(atr[i]):
+        if atr[i] == 0:
             continue
-            
-        # គណនា Lower Band
+        
+        # Lower Band
         if lower_basic[i] > lower_band[i-1] or close[i-1] < lower_band[i-1]:
             lower_band[i] = lower_basic[i]
         else:
             lower_band[i] = lower_band[i-1]
             
-        # គណនា Upper Band
+        # Upper Band
         if upper_basic[i] < upper_band[i-1] or close[i-1] > upper_band[i-1]:
             upper_band[i] = upper_basic[i]
         else:
             upper_band[i] = upper_band[i-1]
             
-        # កំណត់ទិសដៅ Trend (Direction)
+        # Direction
         if close[i] > upper_band[i-1]:
             direction[i] = 1
         elif close[i] < lower_band[i-1]:
@@ -113,12 +114,11 @@ def calculate_supertrend_clean(df, period=10, multiplier=3.0):
             
         supertrend[i] = lower_band[i] if direction[i] == 1 else upper_band[i]
         
-    # បញ្ចូលលទ្ធផលត្រឡប់ទៅក្នុង DataFrame វិញ
     df['SuperTrend'] = supertrend
     df['ST_Bullish'] = [True if x == 1 else False for x in direction]
     
-    # ករណីជួរដំបូងៗដែលជា NaN ត្រូវបំពេញតម្លៃដំបូងចូលដើម្បីកុំឱ្យទើសកូដផ្នែកផ្សេង
-    df['SuperTrend'] = df['SuperTrend'].replace(0, np.nan).bfill()
+    # 🛠️ ដំណោះស្រាយពិសេស៖ បើសិនជាជួរចុងក្រោយបង្អស់ជាប់ None ត្រូវទាញតម្លៃមុននោះមកជំនួសភ្លាម
+    df['SuperTrend'] = df['SuperTrend'].replace(0, np.nan).ffill().bfill()
     
     return df
 
@@ -198,7 +198,7 @@ if st.button("📊 Run Analysis & Backtest"):
             df = calculate_supertrend_clean(df, period=st_period, multiplier=st_multiplier)
             df['MACD_Hist'] = calculate_macd_clean(df['close'])
             df['ADX'] = calculate_adx_clean(df, period=14)
-            df['Avg_Volume'] = df['volume'].rolling(20).mean()
+            df['Avg_Volume'] = df['volume'].ewm(span=20, adjust=False).mean()
             df['Volume_Ratio'] = df['volume'] / df['Avg_Volume'].replace(0, np.nan)
             
             # 🔄 ដំណោះស្រាយដាច់ស្រឡះ៖ មិនប្រើ .dropna() លើ DataFrame ទាំងមូលឡើយ 
