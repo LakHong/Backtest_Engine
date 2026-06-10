@@ -192,9 +192,7 @@ if st.button("📊 Run Analysis & Backtest"):
     with st.spinner("កំពុងទាញយកទិន្នន័យ និងគណនា..."):
         df = fetch_historical_data(symbol=coin_input, timeframe="1h", limit=500)
         
-        # ១. ត្រួតពិនិត្យថា តើទាញទិន្នន័យបានមកពិតប្រាកដមែនឬទេ និងមិនមែនជា DataFrame ទទេ
         if df is not None and not df.empty:
-            
             # គណនា Indicators
             df['RSI'] = calculate_rsi_clean(df['close'], period=14)
             df = calculate_supertrend_clean(df, period=st_period, multiplier=st_multiplier)
@@ -203,41 +201,54 @@ if st.button("📊 Run Analysis & Backtest"):
             df['Avg_Volume'] = df['volume'].rolling(20).mean()
             df['Volume_Ratio'] = df['volume'] / df['Avg_Volume'].replace(0, np.nan)
             
-            # ២. បង្កើត DataFrame ថ្មីមួយដែលលុបចោលតម្លៃ NaN តែលើជួរឈរសំខាន់ៗសម្រាប់ការបង្ហាញ Metrics
-            df_cleaned = df.dropna(subset=['close', 'RSI', 'SuperTrend', 'ADX', 'MACD_Hist'])
-            
-            # ៣. ឆែកលក្ខខណ្ឌការពារ៖ បន្ទាប់ពីលុប NaN ហើយ តើនៅសល់ទិន្នន័យគ្រប់គ្រាន់សម្រាប់ទាញយកដែរឬទេ
-            if not df_cleaned.empty and len(df_cleaned) >= 2:
-                latest = df_cleaned.iloc[-1]
-                prev = df_cleaned.iloc[-2]
+            # 🔄 ដំណោះស្រាយដាច់ស្រឡះ៖ មិនប្រើ .dropna() លើ DataFrame ទាំងមូលឡើយ 
+            # ដើម្បីរក្សាជួរចុងក្រោយបង្អស់ (Latest Row) ឱ្យនៅដដែលទោះជាមាន NaN ក្នុង Indicator ខ្លះក៏ដោយ
+            if len(df) >= 2:
+                latest = df.iloc[-1]
+                prev = df.iloc[-2]
                 
-                # បង្កើត Columns ចំនួន ៦ ឱ្យត្រូវតាម Layout ជាក់ស្តែងរបស់បង (មាន Signal Card មួយទៀត)
+                # បង្កើត Columns ចំនួន ៦ ឱ្យត្រូវតាម Layout របស់បង
                 col1, col2, col3, col4, col5, col6 = st.columns(6)
                 
                 # កាតទី ១៖ តម្លៃបច្ចុប្បន្ន
-                price_diff = ((latest['close'] - prev['close']) / prev['close']) * 100
+                price_diff = ((latest['close'] - prev['close']) / prev['close']) * 100 if prev['close'] != 0 else 0
                 col1.metric("💰 តម្លៃបច្ចុប្បន្ន", f"${latest['close']:.4f}", f"{price_diff:+.2f}%")
                 
-                # កាតទី ២៖ RSI
-                col2.metric("📊 RSI (14)", f"{latest['RSI']:.1f}", "Normal" if 30 <= latest['RSI'] <= 70 else "Over")
+                # កាតទី ២៖ RSI (ករណីតម្លៃ NaN ឱ្យបង្ហាញ "N/A")
+                rsi_val = f"{latest['RSI']:.1f}" if not np.isnan(latest['RSI']) else "N/A"
+                col2.metric("📊 RSI (14)", rsi_val, "Normal" if (not np.isnan(latest['RSI']) and 30 <= latest['RSI'] <= 70) else "Over")
                 
                 # កាតទី ៣៖ SuperTrend
-                st_status = "🟢 Bullish" if latest['ST_Bullish'] else "🔴 Bearish"
-                col3.metric("📈 SuperTrend", f"${latest['SuperTrend']:.4f}", st_status)
+                if not np.isnan(latest['SuperTrend']) and latest['SuperTrend'] != 0:
+                    st_status = "🟢 Bullish" if latest.get('ST_Bullish', True) else "🔴 Bearish"
+                    col3.metric("📈 SuperTrend", f"${latest['SuperTrend']:.4f}", st_status)
+                else:
+                    # បើសិនជាជួរចុងក្រោយបង្អស់ NaN យើងទាញយកតម្លៃពីជួរមុននោះបន្តិចដែលមិនមែនជា NaN
+                    valid_st = df['SuperTrend'].dropna()
+                    if not valid_st.empty:
+                        last_valid_st = valid_st.iloc[-1]
+                        st_status = "🟢 Bullish" if df['ST_Bullish'].loc[valid_st.index[-1]] else "🔴 Bearish"
+                        col3.metric("📈 SuperTrend", f"${last_valid_st:.4f}", st_status)
+                    else:
+                        col3.metric("📈 SuperTrend", "N/A", "Unknown")
                 
                 # កាតទី ៤៖ Volume Ratio
-                col4.metric("📦 Volume Ratio", f"{latest['Volume_Ratio']:.2f}x")
+                v_ratio = f"{latest['Volume_Ratio']:.2f}x" if not np.isnan(latest['Volume_Ratio']) else "N/A"
+                col4.metric("📦 Volume Ratio", v_ratio)
                 
                 # កាតទី ៥៖ MACD Histogram
-                macd_status = "▲ UP" if latest['MACD_Hist'] > 0 else "▼ DOWN"
-                col5.metric("⚡ MACD Hist", f"{latest['MACD_Hist']:.5f}", macd_status)
+                if not np.isnan(latest['MACD_Hist']):
+                    macd_status = "▲ UP" if latest['MACD_Hist'] > 0 else "▼ DOWN"
+                    col5.metric("⚡ MACD Hist", f"{latest['MACD_Hist']:.5f}", macd_status)
+                else:
+                    col5.metric("⚡ MACD Hist", "N/A", "Unknown")
                 
-                # កាតទី ៦៖ Signal (ផ្អែកលើ Market Regime របស់បង)
+                # កាតទី ៦៖ Signal
                 current_signal = "NEUTRAL"
-                if latest['ADX'] > 22 and latest['ST_Bullish'] and latest['RSI'] < 70:
+                if latest['ADX'] > 22 and latest.get('ST_Bullish', False) and latest['RSI'] < 70:
                     current_signal = "BUY (Trend)"
-                elif latest['ADX'] <= 22 and latest['RSI'] < 32:
-                    current_signal = "BUY (Sideway)"
+                elif latest['RSI'] < 30:
+                    current_signal = "BUY (Oversold)"
                 col6.metric("🎯 Signal", current_signal, "Active")
                 
                 # --------------------------------------------------------------------------------
@@ -253,11 +264,11 @@ if st.button("📊 Run Analysis & Backtest"):
                 for i in range(50, len(df)):
                     row = df.iloc[i]
                     c_close = row['close']
-                    if position == 0.0 and row['ADX'] > 22 and row['ST_Bullish'] and row['RSI'] < 70:
+                    if position == 0.0 and row['ADX'] > 22 and row.get('ST_Bullish', False) and row['RSI'] < 70:
                         position = balance / c_close
                         balance = 0.0
                         trades += 1
-                    elif position > 0.0 and (not row['ST_Bullish'] or row['RSI'] > 75):
+                    elif position > 0.0 and (not row.get('ST_Bullish', True) or row['RSI'] > 75):
                         balance = position * c_close
                         position = 0.0
                         wins += 1
@@ -266,14 +277,12 @@ if st.button("📊 Run Analysis & Backtest"):
                     balance = position * df.iloc[-1]['close']
                     
                 final_return = ((balance - 1000.0) / 1000.0) * 100
-                
                 st.success(f"💰 ប្រាក់ដើម: $1000 | 💸 ផលចំណេញសរុប: {final_return:+.2f}% | 🔄 ការជួញដូរសរុប: {trades} ដង")
                 
-                # បង្ហាញតារាងទិន្នន័យផ្នែកខាងក្រោម
+                # បង្ហាញតារាងទិន្នន័យការពារកុំឱ្យផ្ទាំងស
                 st.subheader("📋 ទិន្នន័យលម្អិត (Data Table)")
                 st.dataframe(df[['date', 'open', 'high', 'low', 'close', 'RSI', 'SuperTrend', 'ADX']].tail(10))
-                
             else:
-                st.error("❌ ទិន្នន័យមិនគ្រប់គ្រាន់សម្រាប់ការគណនា Indicators ឡើយ (ទិន្នន័យទាំងអស់សុទ្ធតែជា NaN)។")
+                st.error("❌ ទិន្នន័យក្នុង DataFrame តិចជាង ២ ជួរ មិនអាចគណនាបានឡើយ។")
         else:
-            st.error("❌ មិនអាចទាញយកទិន្នន័យបានទេ! សូមពិនិត្យមើលការភ្ជាប់ API ទៅកាន់ Exchange ម្តងទៀត។")
+            st.error("❌ មិនអាចទាញយកទិន្នន័យបានទេ! សូមពិនិត្យមើលការភ្ជាប់ Network ឬប្រព័ន្ធទាញទិន្នន័យម្តងទៀត។")
