@@ -54,43 +54,72 @@ def calculate_adx_clean(df, period=14):
     return dx.ewm(alpha=1/period, min_periods=period).mean()
 
 def calculate_supertrend_clean(df, period=10, multiplier=3.0):
-    hl2 = (df['high'] + df['low']) / 2
-    tr1 = df['high'] - df['low']
-    tr2 = (df['high'] - df['close'].shift(1)).abs()
-    tr3 = (df['low'] - df['close'].shift(1)).abs()
-    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-    atr = tr.ewm(alpha=1/period, min_periods=period).mean()
+    """
+    គណនា SuperTrend ដោយប្រើប្រាស់ NumPy Arrays ធានាថាលែងចេញ NaN លើ Streamlit Cloud
+    """
+    # ធានាថា Index ត្រូវបានរៀបចំជាលេខរៀងលំដាប់លំដោយពី 0 ឡើងទៅ
+    df = df.reset_index(drop=True)
+    
+    high = df['high'].to_numpy()
+    low = df['low'].to_numpy()
+    close = df['close'].to_numpy()
+    
+    hl2 = (high + low) / 2
+    
+    # គណនា True Range (TR)
+    tr1 = high - low
+    tr2 = np.abs(high - np.roll(close, 1))
+    tr3 = np.abs(low - np.roll(close, 1))
+    tr2[0] = 0
+    tr3[0] = 0
+    tr = np.maximum(tr1, np.maximum(tr2, tr3))
+    
+    # គណនា Average True Range (ATR) តាមទម្រង់ EWM
+    tr_series = pd.Series(tr)
+    atr = tr_series.ewm(alpha=1/period, min_periods=period).mean().to_numpy()
     
     upper_basic = hl2 + multiplier * atr
     lower_basic = hl2 - multiplier * atr
     
-    upper_band = upper_basic.copy()
-    lower_band = lower_basic.copy()
+    upper_band = np.copy(upper_basic)
+    lower_band = np.copy(lower_basic)
     direction = np.ones(len(df))
     supertrend = np.zeros(len(df))
     
+    # ចាប់ផ្តើម Loop គណនា Band នីមួយៗដោយសុវត្ថិភាព
     for i in range(1, len(df)):
-        if lower_basic.iloc[i] > lower_band.iloc[i-1] or df['close'].iloc[i-1] < lower_band.iloc[i-1]:
-            lower_band.iloc[i] = lower_basic.iloc[i]
-        else:
-            lower_band.iloc[i] = lower_band.iloc[i-1]
+        if np.isnan(atr[i]):
+            continue
             
-        if upper_basic.iloc[i] < upper_band.iloc[i-1] or df['close'].iloc[i-1] > upper_band.iloc[i-1]:
-            upper_band.iloc[i] = upper_basic.iloc[i]
+        # គណនា Lower Band
+        if lower_basic[i] > lower_band[i-1] or close[i-1] < lower_band[i-1]:
+            lower_band[i] = lower_basic[i]
         else:
-            upper_band.iloc[i] = upper_band.iloc[i-1]
+            lower_band[i] = lower_band[i-1]
             
-        if df['close'].iloc[i] > upper_band.iloc[i-1]:
+        # គណនា Upper Band
+        if upper_basic[i] < upper_band[i-1] or close[i-1] > upper_band[i-1]:
+            upper_band[i] = upper_basic[i]
+        else:
+            upper_band[i] = upper_band[i-1]
+            
+        # កំណត់ទិសដៅ Trend (Direction)
+        if close[i] > upper_band[i-1]:
             direction[i] = 1
-        elif df['close'].iloc[i] < lower_band.iloc[i-1]:
+        elif close[i] < lower_band[i-1]:
             direction[i] = -1
         else:
             direction[i] = direction[i-1]
             
-        supertrend[i] = lower_band.iloc[i] if direction[i] == 1 else upper_band.iloc[i]
+        supertrend[i] = lower_band[i] if direction[i] == 1 else upper_band[i]
         
+    # បញ្ចូលលទ្ធផលត្រឡប់ទៅក្នុង DataFrame វិញ
     df['SuperTrend'] = supertrend
     df['ST_Bullish'] = [True if x == 1 else False for x in direction]
+    
+    # ករណីជួរដំបូងៗដែលជា NaN ត្រូវបំពេញតម្លៃដំបូងចូលដើម្បីកុំឱ្យទើសកូដផ្នែកផ្សេង
+    df['SuperTrend'] = df['SuperTrend'].replace(0, np.nan).bfill()
+    
     return df
 
 # ========================================================================================
